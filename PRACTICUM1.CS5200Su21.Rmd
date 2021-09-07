@@ -1,0 +1,522 @@
+---
+title: "Practicum1.CS5200Su21"
+output:
+  pdf_document: default
+---
+Authors:
+Sunjit Dhillon [dhillon.su@northeastern.edu] 
+MManzur Morshed [morshed.mm@northeastern.edu]
+
+Link to LucidChart Diagram: https://lucid.app/lucidchart/05c683b2-bfc9-456a-8236-e299310aca73/edit?invitationId=inv_cea08688-d283-4f6b-9021-73ff624cccb3
+
+```{r}
+# Load the required libraries
+library(RMySQL)
+library(dplyr)
+library(ggplot2)
+```
+
+```{r}
+# Settings
+db_user <- 'root'
+db_password <- 'sunjit22'
+db_name <- 'Practicum'
+
+db_host <- 'localhost' 
+db_port <- 3306
+
+# Connect to DB
+mydb <-  dbConnect(MySQL(), user = db_user, password = db_password,
+                 dbname = db_name, host = db_host, port = db_port)
+
+```
+
+```{r}
+# Read data from .csv file into a dataframe
+path <- "/Users/sunjitdhillon/Downloads"
+fn <- "BirdStrikesData.csv"
+
+fileName <- paste(path, fn, sep = "/")
+
+df <- read.csv(fileName, header = TRUE, stringsAsFactors = FALSE)
+```
+
+```{sql connection=mydb}
+set global local_infile=true;
+```
+
+```{r}
+# Create a temporary dataframe and rename column names
+temp <- df
+temp <- rename(temp, record_id = Record.ID, 
+               aircraft_type=Aircraft..Type, 
+               airport_name=Airport..Name, 
+               altitude_bin=Altitude.bin, 
+               aircraft_make_model=Aircraft..Make.Model, 
+               wildlife_number_struck=Wildlife..Number.struck,
+               wildlife_number_struck_actual=Wildlife..Number.Struck.Actual,
+               impact_to_flight=Effect..Impact.to.flight,
+               flight_date=FlightDate,
+               indicated_damage=Effect..Indicated.Damage,
+               aircraft_number_of_engines=Aircraft..Number.of.engines.,
+               aircraft_airline_operator=Aircraft..Airline.Operator,
+               origin_state=Origin.State, 
+               phase_of_flight=When..Phase.of.flight, 
+               conditions_precipitation=Conditions..Precipitation, 
+               conditions_sky=Conditions..Sky, 
+               remains_collected=Remains.of.wildlife.collected.,
+               remains_sent_to_smithsonian=Remains.of.wildlife.sent.to.Smithsonian, 
+               is_aircraft_large=Is.Aircraft.Large., 
+               species=Wildlife..Species, 
+               size=Wildlife..Size, 
+               pilot_warned_of_birds_or_wildlife=Pilot.warned.of.birds.or.wildlife., 
+               total_cost_in_dollars=Cost..Total.., 
+               feet_above_ground=Feet.above.ground,
+               number_of_people_injured=Number.of.people.injured,
+               remarks = Remarks
+)
+head(temp)
+```
+
+Data Cleaning:
+The aircraft_number_of_engines refers to the number of engines in an aircraft,
+which must be an integer value. Based on analysis of data, we found that value 
+of aircraft_number_of_engines corresponding to record id 206990 is 'C'. 
+For uniformity of data type, we assume that aircraft_number_of_engines
+corresponding to aircraft_make_model = 'RKWLTRBO 690' is 2. 
+```{r}
+r<-temp[which(temp$aircraft_make_model=='RKWLTRBO 690'), ]
+r <- r %>% select(record_id, aircraft_make_model, aircraft_number_of_engines)
+r
+```
+
+```{r}
+# Replace 'C' with 2 in temp dataframe.
+temp["aircraft_number_of_engines"][temp["aircraft_number_of_engines"] == 
+                                     'C'] <- 2
+```
+
+
+```{r}
+# Create dataframe Aircraft_df to store all distinct entries of aircrafts
+
+Aircraft_df <- select(temp, aircraft_make_model, aircraft_number_of_engines, 
+                      aircraft_type, is_aircraft_large)
+Aircraft_df <- distinct(Aircraft_df)
+aircraft_id <- seq_len(nrow(Aircraft_df))
+Aircraft_df <- cbind(aircraft_id, Aircraft_df)
+```
+
+```{sql connection=mydb}
+DROP TABLE IF EXISTS Aircraft
+```
+
+```{sql connection=mydb}
+CREATE TABLE Aircraft(
+               aircraft_id INTEGER NOT NULL,
+       aircraft_make_model TEXT,    
+aircraft_number_of_engines INTEGER,
+             aircraft_type TEXT, 
+         is_aircraft_large TEXT,
+CONSTRAINT ck_categorical_aircraft_size CHECK (is_aircraft_large IN ("Yes","No", null)),
+PRIMARY KEY (aircraft_id)
+)
+```
+
+```{r}
+# Write data from dataframe Aircraft_df to table Aircraft
+
+dbWriteTable(mydb, "Aircraft", Aircraft_df, append = TRUE, row.names = FALSE)
+```
+
+```{sql connection=mydb}
+SELECT * FROM Aircraft LIMIT 10
+```
+
+```{r}
+# Create dataframe Airport_df to store all distinct entries of airports.
+
+Airport_df <- select(temp, airport_name, origin_state)
+Airport_df <- distinct(Airport_df)
+airport_id <- seq_len(nrow(Airport_df))
+Airport_df <- cbind(airport_id, Airport_df)
+```
+
+```{sql connection=mydb}
+DROP TABLE IF EXISTS Airport
+```
+
+```{sql connection=mydb}
+CREATE TABLE Airport(
+  airport_id INTEGER NOT NULL,
+airport_name TEXT,
+origin_state TEXT,
+PRIMARY KEY(airport_id)
+)
+```
+
+```{r}
+# Write data from dataframe Airport_df to table Airport
+dbWriteTable(mydb, "Airport", Airport_df, append = TRUE, row.names = FALSE)
+```
+```{sql connection=mydb}
+SELECT * FROM Airport LIMIT 10
+```
+
+
+```{r}
+# Create dataframe Wildlife_df to store all distinct entries of Wildlife species.
+
+Wildlife_df <- select(temp, species, size)
+Wildlife_df <- distinct(Wildlife_df)
+wildlife_id <- seq_len(nrow(Wildlife_df))
+Wildlife_df <- cbind(wildlife_id, Wildlife_df)
+```
+
+```{sql connection=mydb}
+DROP TABLE IF EXISTS Wildlife
+```
+
+```{sql connection=mydb}
+CREATE TABLE Wildlife(
+wildlife_id INTEGER NOT NULL,
+    species TEXT,
+       size TEXT,
+CONSTRAINT ck_categorical_size CHECK (size IN ("Small","Medium","Large", null)),
+PRIMARY KEY (wildlife_id)
+)
+```
+
+```{r}
+# Write data from dataframe Wildlife_df to table Wildlife
+
+dbWriteTable(mydb, "Wildlife", Wildlife_df, append = TRUE, row.names = FALSE)
+```
+
+```{sql connection=mydb}
+SELECT * FROM Wildlife LIMIT 10
+```
+
+
+```{r}
+# Add aircraft_id column to temp dataframe
+
+for(i in 1:dim(temp)[1]) {
+  for(j in 1:dim(Aircraft_df)[1]) {
+    
+    # Compare values of aircraft_make_model, aircraft_number_of_engines, 
+    # aircraft_type, is_aircraft_large in Aircraft_df and temp dataframe
+    if (temp$aircraft_make_model[i]==Aircraft_df$aircraft_make_model[j] 
+        & temp$aircraft_number_of_engines[i]==Aircraft_df$aircraft_number_of_engines[j] 
+        & temp$aircraft_type[i]==Aircraft_df$aircraft_type[j] 
+        & temp$is_aircraft_large[i]==Aircraft_df$is_aircraft_large[j]) {
+      
+      temp$aircraft_id[i] <- j
+      break
+    }
+  }
+}
+```
+
+```{r}
+# Add airport_id column to temp dataframe
+
+for(i in 1:dim(temp)[1]) {
+  for(j in 1:dim(Airport_df)[1]) {
+    
+    # Compare values of airport_name, origin_state in Airport_df & temp dataframe
+    if (temp$airport_name[i]==Airport_df$airport_name[j] &
+        temp$origin_state[i]==Airport_df$origin_state[j]) {
+      temp$airport_id[i] <- j
+      break
+    }
+  }
+}
+```
+
+```{r}
+# Create dataframe Flight_Detail_df
+Flight_Detail_df <- select(temp, record_id, aircraft_id, airport_id, 
+                           flight_date, aircraft_airline_operator, 
+                           pilot_warned_of_birds_or_wildlife)
+# Change the flight_date format
+Flight_Detail_df$flight_date <- as.Date(Flight_Detail_df$flight_date,"%m/%d/%Y")
+# Assume missing values to be a default date '1900-01-01'
+Flight_Detail_df$flight_date[is.na(Flight_Detail_df$flight_date)] <- '1900-01-01'
+```
+
+```{sql connection=mydb}
+DROP TABLE IF EXISTS Flight_Detail
+```
+
+```{sql connection=mydb}
+CREATE TABLE Flight_Detail(
+                        record_id INTEGER NOT NULL,
+                      aircraft_id INTEGER NOT NULL,
+                       airport_id INTEGER NOT NULL,
+                      flight_date DATE DEFAULT(DATE_FORMAT('%Y-%m-%d','1900-01-01')) NOT NULL,
+        aircraft_airline_operator TEXT,
+pilot_warned_of_birds_or_wildlife TEXT,
+CONSTRAINT ck_categorical_pilot_warned CHECK (pilot_warned_of_birds_or_wildlife
+IN ("Y","N", null)),
+PRIMARY KEY (record_id),
+FOREIGN KEY (aircraft_id) REFERENCES Aircraft(aircraft_id) ON DELETE CASCADE,
+FOREIGN KEY (airport_id) REFERENCES Airport(airport_id) ON DELETE CASCADE
+)
+```
+
+```{r}
+# Write data from dataframe Flight_Detail_df to table Flight_Detail
+
+dbWriteTable(mydb, "Flight_Detail", Flight_Detail_df, append = TRUE, 
+             row.names = FALSE)
+```
+```{sql connection=mydb}
+SELECT * FROM Flight_Detail LIMIT 10
+```
+
+```{r}
+# Create dataframe Strike_Impact_df
+Strike_Impact_df <- select(temp, record_id, impact_to_flight, indicated_damage,
+                           number_of_people_injured, total_cost_in_dollars,
+                           remarks)
+
+```
+
+```{sql connection=mydb}
+DROP TABLE IF EXISTS Strike_Impact
+```
+
+```{sql connection=mydb}
+CREATE TABLE Strike_Impact(
+               record_id INTEGER NOT NULL,
+        impact_to_flight TEXT,
+        indicated_damage TEXT,
+number_of_people_injured INTEGER,     
+   total_cost_in_dollars INTEGER,
+                 remarks TEXT,
+CONSTRAINT ck_categorical_impact CHECK (impact_to_flight IN ("Aborted Take-off",
+"Engine Shut Down","None", "Other","Precautionary Landing", null)),
+CONSTRAINT ck_categorical_damage CHECK (indicated_damage IN ("Caused damage",
+"No damage", null)),
+PRIMARY KEY (record_id),
+FOREIGN KEY (record_id) REFERENCES Flight_Detail(record_id) ON DELETE CASCADE
+)
+```
+
+```{r}
+# Write data from dataframe Strike_Impact_df to table Strike_Impact
+dbWriteTable(mydb, "Strike_Impact", Strike_Impact_df, append = TRUE,
+             row.names = FALSE)
+```
+
+```{sql connection=mydb}
+SELECT * FROM Strike_Impact LIMIT 10
+```
+
+```{r}
+# Create dataframe Strike_Condition_df
+Strike_Condition_df <- select(temp, record_id, altitude_bin, feet_above_ground,
+                              conditions_sky, conditions_precipitation, 
+                              phase_of_flight)
+```
+
+```{sql connection=mydb}
+DROP TABLE IF EXISTS Strike_Condition
+```
+
+```{sql connection=mydb}
+CREATE TABLE Strike_Condition(
+               record_id INTEGER NOT NULL,
+            altitude_bin TEXT,
+       feet_above_ground INTEGER,
+          conditions_sky TEXT,
+conditions_precipitation TEXT,
+         phase_of_flight TEXT,
+CONSTRAINT ck_categorical_altitude_bin CHECK (altitude_bin IN ("< 1000 ft","> 1000 ft", null)),
+CONSTRAINT ck_categorical_conditions_sky CHECK (conditions_sky IN ("No Cloud","Some Cloud","Overcast", null)),
+CONSTRAINT ck_categorical_phase CHECK (phase_of_flight IN ("Approach","Climb", "Descent", "Landing roll", "Take-off run", "Taxi", "Parked", null)),
+PRIMARY KEY (record_id),
+FOREIGN KEY (record_id) REFERENCES Flight_Detail(record_id) ON DELETE CASCADE
+)
+```
+
+```{r}
+# Write data from dataframe Strike_Condition_df to table Strike_Condition
+
+dbWriteTable(mydb, "Strike_Condition", Strike_Condition_df, append = TRUE, 
+             row.names = FALSE)
+```
+
+```{sql connection=mydb}
+SELECT * FROM Strike_Condition LIMIT 10
+```
+
+```{r}
+# Add wildlife_id column to temp dataframe
+for(i in 1:dim(temp)[1]) {
+  for(j in 1:dim(Wildlife_df)[1]) {
+    
+    # Compare values of species and size in Wildlife_df & temp dataframe
+    if (temp$species[i]==Wildlife_df$species[j] & temp$size[i]==Wildlife_df$size[j]) {
+      temp$wildlife_id[i] <- j
+      break
+    }
+  }
+}
+```
+
+```{r}
+# Create dataframe Wildlife_Strike_df
+
+Wildlife_Strike_df <- select(temp, record_id, wildlife_id, wildlife_number_struck, 
+                             wildlife_number_struck_actual, remains_collected, 
+                             remains_sent_to_smithsonian)
+```
+
+```{sql connection=mydb}
+DROP TABLE IF EXISTS Wildlife_Strike
+```
+
+```{sql connection=mydb}
+CREATE TABLE Wildlife_Strike(
+                    record_id INTEGER NOT NULL,
+                  wildlife_id INTEGER NOT NULL,
+       wildlife_number_struck TEXT,
+wildlife_number_struck_actual INTEGER,
+            remains_collected TEXT,
+  remains_sent_to_smithsonian TEXT,
+CONSTRAINT ck_categorical_number_struck CHECK (wildlife_number_struck IN ("1","2 to 10","11 to 100","Over 100",null)),
+CONSTRAINT ck_categorical_remains_collected CHECK (remains_collected IN ("TRUE","FALSE", null)),
+CONSTRAINT ck_categorical_remains_sent_to_smithsonian CHECK (remains_sent_to_smithsonian IN ("TRUE","FALSE", null)),
+PRIMARY KEY (record_id),
+FOREIGN KEY (wildlife_id) REFERENCES wildlife(wildlife_id) ON DELETE CASCADE,
+FOREIGN KEY (record_id) REFERENCES Flight_Detail(record_id) ON DELETE CASCADE
+)
+```
+
+```{r}
+# Write data from dataframe Wildlife_Strike_df to table Wildlife_Strike
+
+dbWriteTable(mydb, "Wildlife_Strike", Wildlife_Strike_df, append = TRUE, 
+             row.names = FALSE)
+```
+```{sql connection=mydb}
+SELECT * FROM Wildlife_Strike LIMIT 10
+```
+
+
+Ques 4.
+```{sql connection=mydb}
+SELECT aircraft_airline_operator, COUNT(DISTINCT record_id) AS count_bird_strikes
+FROM Flight_Detail
+WHERE record_id IN (SELECT record_id FROM Strike_Condition WHERE phase_of_flight IN ("Take-off run", "Climb"))
+GROUP BY aircraft_airline_operator;
+```
+
+Ques 5.
+```{sql connection=mydb}
+SELECT airport_name, COUNT(f.record_id) as count
+FROM Flight_Detail AS f
+NATURAL JOIN Airport AS a
+GROUP BY a.airport_name
+HAVING count = (
+SELECT MAX(x.count) FROM
+(SELECT a.airport_name AS airport_name, count(f.record_id) as count
+FROM Flight_Detail AS f
+NATURAL JOIN Airport AS a
+GROUP BY a.airport_name) x)
+```
+
+Ques 6.
+```{sql connection=mydb}
+SELECT EXTRACT(YEAR FROM flight_date) AS year, COUNT(record_id) AS count_bird_strikes
+FROM Flight_Detail
+GROUP BY year
+ORDER BY year 
+```
+
+Ques 7.
+```{r}
+# Create a dataframe containing counts of bird strike incidents grouped by year and phase of flight
+
+sqlCmd = "SELECT EXTRACT(YEAR FROM f.flight_date) AS year, s.phase_of_flight, COUNT(*) AS count
+FROM Flight_Detail AS f
+NATURAL JOIN Strike_Condition AS s
+GROUP BY year, s.phase_of_flight
+HAVING year >= 2008 AND  year <= 2011 
+AND phase_of_flight IN ('Take-off run', 'Climb', 'Descent', 'Approach', 'Landing roll')"
+
+df = dbGetQuery(mydb, sqlCmd)
+df
+```
+```{r}
+# Group the flight phases into 'Take-off/Climbing' and 'Descent/Approach/Landing'
+
+ for(i in 1:dim(df)[1]) {
+    if (df$phase_of_flight[i]=='Take-off run' ||  df$phase_of_flight[i]=='Climb') {
+      df$phase_of_flight[i] <- 'Take-off/Climbing'
+    } 
+   
+   if (df$phase_of_flight[i]=='Approach' ||  df$phase_of_flight[i]=='Landing Roll' 
+       || df$phase_of_flight[i]=='Descent') {
+      df$phase_of_flight[i] <- 'Descent/Approach/Landing'
+
+    }
+}
+df
+```
+
+```{r}
+# Group the bird strike incidents by their total sum per year (grouped by flight phase)
+
+df2 <-df %>%
+  group_by(year, phase_of_flight) %>%
+  summarise(count=sum(count))
+df2
+```
+
+```{r}
+# Plot the dataframe df2 to form a grouped bar chart
+
+ggplot(df2, aes(year, count, fill = phase_of_flight)) + 
+  geom_bar(stat="identity", position = "dodge") + 
+  scale_fill_brewer("Flight Phase", palette = "Set1") +
+   labs(y="Count", x = "Year") +
+ggtitle("Bird Strikes / Year") +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+Ques 8.
+```{sql connection=mydb}
+DROP PROCEDURE IF EXISTS Delete_Flight_Detail 
+```
+
+// The procedure Delete_Flight_Detail deletes bird strike incident record
+// corresponding to the record id entered as a parameter
+```{sql connection=mydb}
+CREATE PROCEDURE Delete_Flight_Detail(IN id_to_delete INTEGER)
+    BEGIN
+      DELETE FROM Flight_Detail
+      WHERE record_id=id_to_delete;
+    END
+```
+
+// Before calling the procedure:
+```{sql connection=mydb}
+SELECT * FROM Flight_Detail where record_id = 1195
+```
+
+// Call the procedure
+```{sql connection=mydb}
+CALL Delete_Flight_Detail(1195)
+```
+
+// After calling the procedure, the record corresponding to record id 1195 has 
+// been deleted
+```{sql connection=mydb}
+SELECT * FROM Flight_Detail where record_id = 1195
+```
+```{r}
+dbDisconnect(mydb)
+```
